@@ -1,128 +1,119 @@
 import requests
 import os
-import re
-import requests
 import time
+import re
 from pathlib import Path
 
+# ✅ GitHub Links
+RAW_TEXT_URL = "https://raw.githubusercontent.com/LeoHenryM/2025_OCRCleaning/main/InputOCR.txt"  # Change to actual file
+OUTPUT_REPO = "https://github.com/LeoHenryM/2025_OCRCleaning"  # Change if needed
 
-# Define directories
-INPUT_FOLDER = Path("./data/archivesOCR/ToSendForCleaning1")
-OUTPUT_FOLDER = Path("./Data/archivesCleaned/Rapport")
-
-# Ensure output folder exists
-OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
-
-# Get API URL (Check forwarded port dynamically!)
-OLLAMA_IP = "50.214.240.91"  # Update with your latest Akash IP
-OLLAMA_PORT = "30401"  # Check "Forwarded Ports" in Akash Console!
+# ✅ Fetch Latest IP & Port from Environment
+OLLAMA_IP = os.getenv("OLLAMA_IP", "50.214.240.91")  # Update if needed
+OLLAMA_PORT = os.getenv("OLLAMA_PORT", "30401")  # Change if Akash assigns a new one
 OLLAMA_URL = f"http://{OLLAMA_IP}:{OLLAMA_PORT}/api/generate"
-
-# Ollama Model
 OLLAMA_MODEL = "phi3"
 
 
-def split_text_smart(text, max_length=500):
-    """
-    Splits text into smaller chunks (max_length), ensuring clean cut-off points.
-    """
+# ✅ Fetch Text File from GitHub
+def fetch_text_from_github():
+    print("📥 Downloading text from GitHub...")
+    response = requests.get(RAW_TEXT_URL)
+    if response.status_code == 200:
+        return response.text
+    else:
+        print(f"❌ Error fetching text: {response.status_code}")
+        return None
+
+
+# ✅ Smart Text Split
+def split_text_smart(text, max_length=3000):
     split_texts = []
     start = 0
-
     while start < len(text):
-        # Try to cut at a sentence boundary
         end = start + max_length
         if end >= len(text):
             split_texts.append(text[start:])
             break
-
-        # Find the nearest period, exclamation, or newline before the cutoff
         match = re.search(r"[\.\!\?\n](?![0-9])", text[start:end][::-1])
-        if match:
-            end = start + max_length - match.start() - 1
-        else:
-            # No clean break found, just cut at max_length
-            end = start + max_length
-
+        end = start + max_length - match.start() - 1 if match else start + max_length
         split_texts.append(text[start:end].strip())
         start = end
-
     return split_texts
 
-# Example usage:
-# chunks = split_text_smart("Very long text here...", 3000)
 
-
-
+# ✅ Ollama Cleaning Function
 def clean_text_with_ollama(text):
-    """
-    Sends a chunk of OCR text to Ollama API for cleaning.
-    """
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": f"""Le texte suivant provient d'une reconnaissance OCR de plusieurs images d'un même document.
         Veuillez:
         1. Corriger les erreurs OCR.
-        2. Couper en paragraphe si necessaire.
+        2. Ajouter des paragraphes.
         3. Formater les titres en Markdown (`#` pour les niveaux).
-        4. Remplacer les possibles tableau ou graphique par '[Graphique ou Tableau]'.
-        5. Respecter la structure originale et ne créer pas de text qui n'existe pas.
+        4. Remplacer les tableaux/graphes par '[Graphique ou Tableau]'.
+        5. Respecter la structure originale.
 
         Texte à nettoyer :
         {text}
         """,
-        "stream": False  # 🚀 Forces Ollama to return the full response at once
+        "stream": False
     }
-
     print(f"🔄 Sending request to {OLLAMA_URL}...")
-
-    try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=600000)
-        print(f"✅ Received response: {response.status_code}")
-
-        if response.status_code == 200:
-            return response.json().get("response", "").strip()
-        else:
-            print(f"❌ API Error ({response.status_code}): {response.text}")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Request failed: {e}")
+    response = requests.post(OLLAMA_URL, json=payload, timeout=60)
+    if response.status_code == 200:
+        return response.json().get("response", "").strip()
+    else:
+        print(f"❌ API Error ({response.status_code}): {response.text}")
         return None
 
 
-def process_all_reports():
-    """
-    Processes all merged OCR reports by sending them to Ollama in 3000-character chunks.
-    """
-    merged_files = list(INPUT_FOLDER.glob("*.txt"))
+# ✅ Process the Text
+def process_text():
+    text = fetch_text_from_github()
+    if not text:
+        return
 
-    for file in merged_files:
-        year = file.stem  # Extract year from filename
-        output_file = OUTPUT_FOLDER / f"cleaned_report.{year}.txt"
+    chunks = split_text_smart(text, 3000)
+    cleaned_text = []
 
-        # Skip if already processed
-        if output_file.exists():
-            print(f"✅ {output_file} already cleaned. Skipping.")
-            continue
+    print(f"📜 Processing {len(chunks)} chunks...")
+    for i, chunk in enumerate(chunks):
+        cleaned = clean_text_with_ollama(chunk)
+        if cleaned:
+            cleaned_text.append(cleaned)
+        print(f"✅ {i + 1}/{len(chunks)} chunks processed")
 
-        with open(file, "r", encoding="utf-8") as f:
-            text = f.read()
+    final_text = "\n\n".join(cleaned_text)
 
-        file_conn = open(output_file, "w", encoding="utf-8")
+    # Save locally
+    output_path = "cleaned_text.txt"
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(final_text)
 
-        chunks = split_text_smart(text, 3000)
-        print(f"📜 Processing {len(chunks)} chunks for {file.name}")
+    print("✅ Cleaning complete. Uploading to GitHub...")
+    upload_to_github(output_path)
 
-        for i, chunk in enumerate(chunks):
-            cleaned_text = clean_text_with_ollama(chunk)
-            if cleaned_text:
-                file_conn.write(cleaned_text + "\n\n")
 
-            # Respect API rate limits
+# ✅ Upload to GitHub
+def upload_to_github(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
 
-            print(f"📝 {i+1}/{len(chunks)} chunks processed")
+    payload = {
+        "message": "Updated OCR cleaned file",
+        "content": content.encode("utf-8").hex(),
+        "branch": "main"
+    }
 
-        file_conn.close()
-        print(f"✅ Cleaned report saved: {output_file}")
+    headers = {"Authorization": f"token {os.getenv('GITHUB_TOKEN', '')}"}
+    response = requests.put(f"{OUTPUT_REPO}/contents/cleaned_text.txt", json=payload, headers=headers)
 
-process_all_reports()
+    if response.status_code in [200, 201]:
+        print("✅ Uploaded successfully!")
+    else:
+        print(f"❌ Upload failed: {response.status_code} - {response.text}")
+
+
+# ✅ Run the Process
+process_text()
