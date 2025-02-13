@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 # ✅ GitHub Links
-RAW_TEXT_URL = "https://raw.githubusercontent.com/LeoHenryM/2025_OCRCleaning/main/InputOCR.txt"  # Change to actual file
+RAW_TEXT_URL = "https://raw.githubusercontent.com/LeoHenryM/2025_OCRCleaning/refs/heads/main/ToSendForCleaning1/rapport_PF_1946.txt"  # Change to actual file
 OUTPUT_REPO = "https://github.com/LeoHenryM/2025_OCRCleaning"  # Change if needed
 
 # ✅ Fetch Latest IP & Port from Environment
